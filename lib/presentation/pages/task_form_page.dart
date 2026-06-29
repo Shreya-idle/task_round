@@ -116,14 +116,22 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       );
 
       final notifier = ref.read(taskListProvider.notifier);
-      if (_isEditing) {
-        await notifier.updateTask(task);
-      } else {
-        await notifier.addTask(task);
-      }
+      final reminderScheduled = _isEditing
+          ? await notifier.updateTask(task)
+          : await notifier.addTask(task);
 
       if (!mounted) return;
       Navigator.of(context).pop();
+
+      if (_reminderAt != null && !reminderScheduled) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Task saved, but reminder could not be scheduled. Check notification permissions.',
+            ),
+          ),
+        );
+      }
     } catch (_) {
       if (mounted) {
         setState(() => _isSaving = false);

@@ -68,6 +68,7 @@ class TaskListNotifier extends AsyncNotifier<TaskListState> {
   Timer? _searchDebounce;
   PendingDelete? _pendingDelete;
   Timer? _undoTimer;
+  bool _remindersBootstrapped = false;
 
   @override
   Future<TaskListState> build() async {
@@ -75,10 +76,10 @@ class TaskListNotifier extends AsyncNotifier<TaskListState> {
       _searchDebounce?.cancel();
       _undoTimer?.cancel();
     });
-    return _loadTasks();
+    return _loadTasks(bootstrapReminders: true);
   }
 
-  Future<TaskListState> _loadTasks() async {
+  Future<TaskListState> _loadTasks({bool bootstrapReminders = false}) async {
     final getTasks = await ref.read(getTasksUseCaseProvider.future);
     final repository = await ref.read(taskRepositoryProvider.future);
     final filter = ref.read(filterProvider);
@@ -89,11 +90,24 @@ class TaskListNotifier extends AsyncNotifier<TaskListState> {
     final progress =
         allTasks.isEmpty ? 0.0 : completed / allTasks.length;
 
-    unawaited(NotificationService.instance.syncTaskReminders(allTasks));
+    if (bootstrapReminders && !_remindersBootstrapped) {
+      _remindersBootstrapped = true;
+      unawaited(NotificationService.instance.syncTaskReminders(allTasks));
+    }
 
     return TaskListState(
       tasks: tasks,
       todayProgress: progress,
+      totalTaskCount: allTasks.length,
+      completedTaskCount: completed,
+    );
+  }
+
+  TaskListState _stateFromAllTasks(List<Task> allTasks, List<Task> visible) {
+    final completed = allTasks.where((task) => task.isCompleted).length;
+    return TaskListState(
+      tasks: visible,
+      todayProgress: allTasks.isEmpty ? 0.0 : completed / allTasks.length,
       totalTaskCount: allTasks.length,
       completedTaskCount: completed,
     );
@@ -126,27 +140,56 @@ class TaskListNotifier extends AsyncNotifier<TaskListState> {
     );
   }
 
-  Future<void> addTask(Task task) async {
+  Future<bool> addTask(Task task) async {
     final useCase = await ref.read(createTaskUseCaseProvider.future);
     final saved = await useCase(task);
-    unawaited(_scheduleReminderIfNeeded(saved));
-    unawaited(_silentRefresh());
+    return _persistAndRefresh(saved);
   }
 
-  Future<void> updateTask(Task task) async {
+  Future<bool> updateTask(Task task) async {
     final useCase = await ref.read(updateTaskUseCaseProvider.future);
     final saved = await useCase(task);
-    unawaited(_scheduleReminderIfNeeded(saved));
-    unawaited(_silentRefresh());
+    return _persistAndRefresh(saved);
+  }
+
+  Future<bool> _persistAndRefresh(Task saved) async {
+    final scheduled = await _scheduleReminderIfNeeded(saved);
+
+    final getTasks = await ref.read(getTasksUseCaseProvider.future);
+    final repository = await ref.read(taskRepositoryProvider.future);
+    final filter = ref.read(filterProvider);
+    final allTasks = await getTasks();
+    final visible = repository.filterTasks(allTasks, filter);
+
+    state = AsyncData(_stateFromAllTasks(allTasks, visible));
+    return scheduled;
   }
 
   Future<void> toggleComplete(Task task) async {
+    final current = state.valueOrNull;
+    if (current == null) return;
+
     final now = DateTime.now();
     final updated = task.copyWith(
       isCompleted: !task.isCompleted,
       completedAt: () => !task.isCompleted ? now : null,
     );
-    await updateTask(updated);
+
+    final optimisticTasks = current.tasks
+        .map((t) => t.id == task.id ? updated : t)
+        .toList(growable: false);
+    state = AsyncData(current.copyWith(tasks: optimisticTasks));
+
+    final useCase = await ref.read(updateTaskUseCaseProvider.future);
+    final saved = await useCase(updated);
+    await _scheduleReminderIfNeeded(saved);
+
+    final getTasks = await ref.read(getTasksUseCaseProvider.future);
+    final repository = await ref.read(taskRepositoryProvider.future);
+    final filter = ref.read(filterProvider);
+    final allTasks = await getTasks();
+    final visible = repository.filterTasks(allTasks, filter);
+    state = AsyncData(_stateFromAllTasks(allTasks, visible));
   }
 
   Future<void> reorder(int oldIndex, int newIndex) async {
@@ -175,7 +218,7 @@ class TaskListNotifier extends AsyncNotifier<TaskListState> {
 
     final deleteUseCase = await ref.read(deleteTaskUseCaseProvider.future);
     await deleteUseCase(task.id);
-    unawaited(_cancelReminder(task));
+    await _cancelReminder(task);
 
     _pendingDelete = PendingDelete(
       task: task,
@@ -223,27 +266,28 @@ class TaskListNotifier extends AsyncNotifier<TaskListState> {
     ids.insert(insertAt, pending.task.id);
     await reorderUseCase(ids);
 
-    unawaited(_scheduleReminderIfNeeded(pending.task));
-    unawaited(_silentRefresh());
+    await _scheduleReminderIfNeeded(pending.task);
+    await _silentRefresh();
     return true;
   }
 
   PendingDelete? get pendingDelete => _pendingDelete;
 
-  Future<void> _scheduleReminderIfNeeded(Task task) async {
+  Future<bool> _scheduleReminderIfNeeded(Task task) async {
     final notifications = NotificationService.instance;
     final id = notifications.notificationIdFromTaskId(task.id);
 
-    await notifications.cancelReminder(id);
-
-    if (task.reminderAt != null && !task.isCompleted) {
-      await notifications.scheduleTaskReminder(
-        notificationId: id,
-        title: 'Task reminder',
-        body: task.title,
-        scheduledAt: task.reminderAt!,
-      );
+    if (task.reminderAt == null || task.isCompleted) {
+      await notifications.cancelReminder(id);
+      return false;
     }
+
+    return notifications.scheduleTaskReminder(
+      notificationId: id,
+      title: 'Task reminder',
+      body: task.title,
+      scheduledAt: task.reminderAt!,
+    );
   }
 
   Future<void> _cancelReminder(Task task) async {

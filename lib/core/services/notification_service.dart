@@ -18,6 +18,7 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
 
   bool _initialized = false;
+  bool _permissionsGranted = false;
 
   Future<void> initialize() async {
     if (_initialized) return;
@@ -47,13 +48,19 @@ class NotificationService {
         _channelId,
         _channelName,
         description: 'Reminders for upcoming tasks',
-        importance: Importance.high,
+        importance: Importance.max,
         playSound: true,
         enableVibration: true,
       );
       await android?.createNotificationChannel(channel);
-      await android?.requestNotificationsPermission();
+
+      final notificationGranted =
+          await android?.requestNotificationsPermission() ?? false;
       await android?.requestExactAlarmsPermission();
+
+      _permissionsGranted = notificationGranted;
+    } else {
+      _permissionsGranted = true;
     }
 
     _initialized = true;
@@ -63,6 +70,9 @@ class NotificationService {
     try {
       final timeZoneName = await FlutterTimezone.getLocalTimezone();
       tz.setLocalLocation(tz.getLocation(timeZoneName));
+      if (kDebugMode) {
+        debugPrint('NotificationService: timezone set to $timeZoneName');
+      }
     } catch (e) {
       if (kDebugMode) {
         debugPrint('NotificationService: timezone fallback — $e');
@@ -78,26 +88,15 @@ class NotificationService {
     required DateTime scheduledAt,
   }) async {
     if (!_initialized) await initialize();
+    if (!_permissionsGranted && kDebugMode) {
+      debugPrint('NotificationService: notification permission not granted');
+    }
 
-    final now = DateTime.now();
-    if (!scheduledAt.isAfter(now)) {
+    final tzTime = _toLocalTz(scheduledAt);
+    if (!tzTime.isAfter(tz.TZDateTime.now(tz.local))) {
       if (kDebugMode) {
         debugPrint('NotificationService: reminder time is in the past — skipped');
       }
-      return false;
-    }
-
-    final tzTime = tz.TZDateTime(
-      tz.local,
-      scheduledAt.year,
-      scheduledAt.month,
-      scheduledAt.day,
-      scheduledAt.hour,
-      scheduledAt.minute,
-      scheduledAt.second,
-    );
-
-    if (!tzTime.isAfter(tz.TZDateTime.now(tz.local))) {
       return false;
     }
 
@@ -111,6 +110,7 @@ class NotificationService {
         playSound: true,
         enableVibration: true,
         icon: '@mipmap/ic_launcher',
+        fullScreenIntent: true,
       ),
       iOS: DarwinNotificationDetails(
         presentAlert: true,
@@ -119,23 +119,14 @@ class NotificationService {
       ),
     );
 
-    try {
-      await _plugin.zonedSchedule(
-        notificationId,
-        title,
-        body,
-        tzTime,
-        details,
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      );
-      if (kDebugMode) {
-        debugPrint('NotificationService: scheduled #$notificationId at $tzTime');
-      }
-      return true;
-    } on Exception catch (e) {
-      if (kDebugMode) {
-        debugPrint('NotificationService: exact schedule failed — $e');
-      }
+    await cancelReminder(notificationId);
+
+    final modes = [
+      AndroidScheduleMode.exactAllowWhileIdle,
+      AndroidScheduleMode.inexactAllowWhileIdle,
+    ];
+
+    for (final mode in modes) {
       try {
         await _plugin.zonedSchedule(
           notificationId,
@@ -143,16 +134,34 @@ class NotificationService {
           body,
           tzTime,
           details,
-          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          androidScheduleMode: mode,
         );
-        return true;
-      } on Exception catch (fallbackError) {
         if (kDebugMode) {
-          debugPrint('NotificationService: schedule failed — $fallbackError');
+          debugPrint(
+            'NotificationService: scheduled #$notificationId at $tzTime ($mode)',
+          );
         }
-        return false;
+        return true;
+      } on Exception catch (e) {
+        if (kDebugMode) {
+          debugPrint('NotificationService: $mode failed — $e');
+        }
       }
     }
+
+    return false;
+  }
+
+  tz.TZDateTime _toLocalTz(DateTime dateTime) {
+    return tz.TZDateTime(
+      tz.local,
+      dateTime.year,
+      dateTime.month,
+      dateTime.day,
+      dateTime.hour,
+      dateTime.minute,
+      dateTime.second,
+    );
   }
 
   Future<void> cancelReminder(int notificationId) async {
@@ -163,14 +172,14 @@ class NotificationService {
     if (!_initialized) await initialize();
 
     for (final task in tasks) {
-      final id = notificationIdFromTaskId(task.id);
-      await cancelReminder(id);
+      if (task.reminderAt == null || task.isCompleted) {
+        await cancelReminder(notificationIdFromTaskId(task.id));
+        continue;
+      }
 
-      if (task.reminderAt != null &&
-          !task.isCompleted &&
-          task.reminderAt!.isAfter(DateTime.now())) {
+      if (task.reminderAt!.isAfter(DateTime.now())) {
         await scheduleTaskReminder(
-          notificationId: id,
+          notificationId: notificationIdFromTaskId(task.id),
           title: 'Task reminder',
           body: task.title,
           scheduledAt: task.reminderAt!,

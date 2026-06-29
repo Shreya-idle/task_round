@@ -5,20 +5,23 @@ import '../../domain/entities/task_filter.dart';
 import 'dependency_providers.dart';
 
 class ThemeNotifier extends Notifier<ThemeMode> {
-  @override
-  ThemeMode build() => ThemeMode.light;
+  ThemeNotifier([ThemeMode? initial]) : _initial = initial;
 
-  Future<void> load() async {
-    final repo = await ref.read(settingsRepositoryProvider.future);
-    final isDark = await repo.getIsDarkMode();
-    state = isDark ? ThemeMode.dark : ThemeMode.light;
-  }
+  final ThemeMode? _initial;
+
+  @override
+  ThemeMode build() => _initial ?? ThemeMode.light;
 
   Future<void> toggle() async {
-    final repo = await ref.read(settingsRepositoryProvider.future);
     final next = state == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
     state = next;
-    await repo.setIsDarkMode(next == ThemeMode.dark);
+
+    try {
+      final repo = await ref.read(settingsRepositoryProvider.future);
+      await repo.setIsDarkMode(next == ThemeMode.dark);
+    } catch (_) {
+      // Keep UI responsive even if persistence fails momentarily.
+    }
   }
 }
 
@@ -27,13 +30,12 @@ final themeModeProvider = NotifierProvider<ThemeNotifier, ThemeMode>(
 );
 
 class FilterNotifier extends Notifier<TaskFilter> {
-  @override
-  TaskFilter build() => const TaskFilter();
+  FilterNotifier([TaskFilter? initial]) : _initial = initial;
 
-  Future<void> load() async {
-    final repo = await ref.read(settingsRepositoryProvider.future);
-    state = await repo.getSavedFilter();
-  }
+  final TaskFilter? _initial;
+
+  @override
+  TaskFilter build() => _initial ?? const TaskFilter();
 
   Future<void> _persist() async {
     final repo = await ref.read(settingsRepositoryProvider.future);

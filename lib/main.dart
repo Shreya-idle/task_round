@@ -5,24 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'app.dart';
 import 'core/services/notification_service.dart';
 import 'data/datasources/task_local_datasource.dart';
-import 'domain/entities/task_filter.dart';
 import 'presentation/providers/settings_providers.dart';
-
-class _BootstrapThemeNotifier extends ThemeNotifier {
-  _BootstrapThemeNotifier(this._initialMode);
-  final ThemeMode _initialMode;
-
-  @override
-  ThemeMode build() => _initialMode;
-}
-
-class _BootstrapFilterNotifier extends FilterNotifier {
-  _BootstrapFilterNotifier(this._initialFilter);
-  final TaskFilter _initialFilter;
-
-  @override
-  TaskFilter build() => _initialFilter;
-}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,10 +22,10 @@ Future<void> main() async {
     ProviderScope(
       overrides: [
         themeModeProvider.overrideWith(
-          () => _BootstrapThemeNotifier(initialTheme),
+          () => ThemeNotifier(initialTheme),
         ),
         filterProvider.overrideWith(
-          () => _BootstrapFilterNotifier(savedFilter),
+          () => FilterNotifier(savedFilter),
         ),
       ],
       child: const TaskManagerApp(),

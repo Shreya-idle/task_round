@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../core/router/page_transitions.dart';
@@ -10,7 +11,7 @@ import '../providers/task_list_provider.dart';
 import '../widgets/active_filter_banner.dart';
 import '../widgets/animated_fab.dart';
 import '../widgets/progress_ring.dart';
-import '../widgets/task_tile.dart';
+import '../widgets/swipeable_task_tile.dart';
 import '../widgets/undo_delete_snackbar.dart';
 import 'task_form_page.dart';
 
@@ -93,6 +94,18 @@ class _HomePageState extends ConsumerState<HomePage> {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Task Manager Pro'),
+          actions: [
+            IconButton(
+              tooltip: 'Toggle theme',
+              onPressed: () =>
+                  ref.read(themeModeProvider.notifier).toggle(),
+              icon: Icon(
+                theme.brightness == Brightness.dark
+                    ? Icons.light_mode_outlined
+                    : Icons.dark_mode_outlined,
+              ),
+            ),
+          ],
         ),
         resizeToAvoidBottomInset: true,
         body: SafeArea(
@@ -158,59 +171,40 @@ class _HomePageState extends ConsumerState<HomePage> {
                       return _EmptyState(filter: filter);
                     }
 
-                    return ReorderableListView.builder(
-                      buildDefaultDragHandles: false,
-                      keyboardDismissBehavior:
-                          ScrollViewKeyboardDismissBehavior.onDrag,
-                      cacheExtent: 400,
-                      padding: const EdgeInsets.only(bottom: 24),
-                      itemCount: state.tasks.length,
-                      onReorder: (oldIndex, newIndex) {
-                        ref
-                            .read(taskListProvider.notifier)
-                            .reorder(oldIndex, newIndex);
-                      },
-                      itemBuilder: (context, index) {
-                        final task = state.tasks[index];
-                        return Dismissible(
-                          key: ValueKey(task.id),
-                          direction: DismissDirection.endToStart,
-                          background: Container(
-                            alignment: Alignment.centerRight,
-                            margin: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 6,
-                            ),
-                            padding: const EdgeInsets.only(right: 24),
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.error,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: Icon(
-                              Icons.delete_outline,
-                              color: theme.colorScheme.onError,
-                            ),
-                          ),
-                          onDismissed: (_) => _handleDismiss(task, index),
-                          child: TaskTile(
+                    return SlidableAutoCloseBehavior(
+                      child: ReorderableListView.builder(
+                        buildDefaultDragHandles: false,
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        cacheExtent: 500,
+                        padding: const EdgeInsets.only(bottom: 24),
+                        itemCount: state.tasks.length,
+                        proxyDecorator: (child, index, animation) {
+                          return Material(
+                            elevation: 4 * animation.value,
+                            borderRadius: BorderRadius.circular(16),
+                            child: child,
+                          );
+                        },
+                        onReorder: (oldIndex, newIndex) {
+                          ref
+                              .read(taskListProvider.notifier)
+                              .reorder(oldIndex, newIndex);
+                        },
+                        itemBuilder: (context, index) {
+                          final task = state.tasks[index];
+                          return SwipeableTaskTile(
+                            key: ValueKey(task.id),
                             task: task,
+                            index: index,
                             onTap: () => _openTaskForm(task: task),
                             onToggleComplete: () => ref
                                 .read(taskListProvider.notifier)
                                 .toggleComplete(task),
-                            dragHandle: ReorderableDragStartListener(
-                              index: index,
-                              child: Padding(
-                                padding: const EdgeInsets.only(top: 8),
-                                child: Icon(
-                                  Icons.drag_handle,
-                                  color: theme.colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      },
+                            onDelete: () => _handleDismiss(task, index),
+                          );
+                        },
+                      ),
                     );
                   },
                 ),
@@ -218,10 +212,9 @@ class _HomePageState extends ConsumerState<HomePage> {
             ],
           ),
         ),
-        floatingActionButton: AnimatedFab(
-          onAddTask: () => _openTaskForm(),
-          onToggleTheme: () => ref.read(themeModeProvider.notifier).toggle(),
-        ),
+      floatingActionButton: AnimatedFab(
+        onAddTask: () => _openTaskForm(),
+      ),
       ),
     );
   }
@@ -277,6 +270,7 @@ class _ProgressHeader extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               ProgressRing(
+                key: ValueKey(completed * 1000 + total),
                 progress: state.todayProgress,
                 size: 72,
               ),
