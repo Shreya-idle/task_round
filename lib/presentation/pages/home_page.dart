@@ -30,7 +30,6 @@ class _HomePageState extends ConsumerState<HomePage> {
   void initState() {
     super.initState();
     _searchController.text = ref.read(filterProvider).searchQuery;
-    _searchController.addListener(() => setState(() {}));
   }
 
   @override
@@ -73,12 +72,14 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  void _clearSearch() {
+    _searchController.clear();
+    ref.read(taskListProvider.notifier).onSearchChanged('');
+  }
+
   @override
   Widget build(BuildContext context) {
-    final taskState = ref.watch(taskListProvider);
     final theme = Theme.of(context);
-    final filter = ref.watch(filterProvider);
-    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
 
     ref.listen(filterProvider, (previous, next) {
       if (previous == null) return;
@@ -89,133 +90,177 @@ class _HomePageState extends ConsumerState<HomePage> {
       }
     });
 
-    return GestureDetector(
-      onTap: () => FocusScope.of(context).unfocus(),
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Task Manager Pro'),
-          actions: [
-            IconButton(
-              tooltip: 'Toggle theme',
-              onPressed: () =>
-                  ref.read(themeModeProvider.notifier).toggle(),
-              icon: Icon(
-                theme.brightness == Brightness.dark
-                    ? Icons.light_mode_outlined
-                    : Icons.dark_mode_outlined,
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Task Manager Pro'),
+        actions: [
+          IconButton(
+            tooltip: 'Toggle theme',
+            onPressed: () => ref.read(themeModeProvider.notifier).toggle(),
+            icon: Icon(
+              theme.brightness == Brightness.dark
+                  ? Icons.light_mode_outlined
+                  : Icons.dark_mode_outlined,
+            ),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const _ProgressHeaderSection(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: _TaskSearchField(
+                controller: _searchController,
+                focusNode: _searchFocusNode,
+                onChanged: ref.read(taskListProvider.notifier).onSearchChanged,
+                onClear: _clearSearch,
+              ),
+            ),
+            const ActiveFilterBanner(),
+            Expanded(
+              child: _TaskListSection(
+                onOpenTask: (task) => _openTaskForm(task: task),
+                onDismiss: _handleDismiss,
               ),
             ),
           ],
         ),
-        resizeToAvoidBottomInset: true,
-        body: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Flexible(
-                flex: keyboardOpen ? 1 : 0,
-                fit: keyboardOpen ? FlexFit.tight : FlexFit.loose,
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (!keyboardOpen)
-                        taskState.when(
-                          loading: () => const SizedBox.shrink(),
-                          error: (_, _) => const SizedBox.shrink(),
-                          data: (state) => _ProgressHeader(state: state),
-                        ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                        child: SearchBar(
-                          focusNode: _searchFocusNode,
-                          controller: _searchController,
-                          hintText: 'Search title or description...',
-                          leading: const Icon(Icons.search),
-                          elevation: WidgetStateProperty.all(0),
-                          backgroundColor: WidgetStateProperty.all(
-                            theme.colorScheme.surfaceContainerHighest,
-                          ),
-                          onChanged: (value) {
-                            ref
-                                .read(taskListProvider.notifier)
-                                .debouncedSearch(value);
-                          },
-                          trailing: [
-                            if (_searchController.text.isNotEmpty)
-                              IconButton(
-                                icon: const Icon(Icons.clear),
-                                onPressed: () {
-                                  _searchController.clear();
-                                  ref
-                                      .read(taskListProvider.notifier)
-                                      .debouncedSearch('');
-                                },
-                              ),
-                          ],
-                        ),
-                      ),
-                      if (!keyboardOpen) const ActiveFilterBanner(),
-                    ],
-                  ),
-                ),
-              ),
-              Expanded(
-                child: taskState.when(
-                  loading: () =>
-                      const Center(child: CircularProgressIndicator()),
-                  error: (e, _) => Center(child: Text('Error: $e')),
-                  data: (state) {
-                    if (state.tasks.isEmpty) {
-                      return _EmptyState(filter: filter);
-                    }
-
-                    return SlidableAutoCloseBehavior(
-                      child: ReorderableListView.builder(
-                        buildDefaultDragHandles: false,
-                        keyboardDismissBehavior:
-                            ScrollViewKeyboardDismissBehavior.onDrag,
-                        cacheExtent: 500,
-                        padding: const EdgeInsets.only(bottom: 24),
-                        itemCount: state.tasks.length,
-                        proxyDecorator: (child, index, animation) {
-                          return Material(
-                            elevation: 4 * animation.value,
-                            borderRadius: BorderRadius.circular(16),
-                            child: child,
-                          );
-                        },
-                        onReorder: (oldIndex, newIndex) {
-                          ref
-                              .read(taskListProvider.notifier)
-                              .reorder(oldIndex, newIndex);
-                        },
-                        itemBuilder: (context, index) {
-                          final task = state.tasks[index];
-                          return SwipeableTaskTile(
-                            key: ValueKey(task.id),
-                            task: task,
-                            index: index,
-                            onTap: () => _openTaskForm(task: task),
-                            onToggleComplete: () => ref
-                                .read(taskListProvider.notifier)
-                                .toggleComplete(task),
-                            onDelete: () => _handleDismiss(task, index),
-                          );
-                        },
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
+      ),
       floatingActionButton: AnimatedFab(
         onAddTask: () => _openTaskForm(),
       ),
-      ),
+    );
+  }
+}
+
+class _TaskSearchField extends StatelessWidget {
+  const _TaskSearchField({
+    required this.controller,
+    required this.focusNode,
+    required this.onChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: controller,
+      builder: (context, value, _) {
+        return TextField(
+          controller: controller,
+          focusNode: focusNode,
+          textInputAction: TextInputAction.search,
+          decoration: InputDecoration(
+            hintText: 'Search title or description...',
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon: value.text.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.clear),
+                    onPressed: onClear,
+                  )
+                : null,
+            filled: true,
+            fillColor: theme.colorScheme.surfaceContainerHighest,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(28),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(28),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(28),
+              borderSide: BorderSide.none,
+            ),
+            contentPadding: const EdgeInsets.symmetric(vertical: 12),
+          ),
+          onChanged: onChanged,
+        );
+      },
+    );
+  }
+}
+
+class _ProgressHeaderSection extends ConsumerWidget {
+  const _ProgressHeaderSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final taskState = ref.watch(taskListProvider);
+
+    return taskState.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, _) => const SizedBox.shrink(),
+      data: (state) => _ProgressHeader(state: state),
+    );
+  }
+}
+
+class _TaskListSection extends ConsumerWidget {
+  const _TaskListSection({
+    required this.onOpenTask,
+    required this.onDismiss,
+  });
+
+  final ValueChanged<Task> onOpenTask;
+  final Future<void> Function(Task task, int index) onDismiss;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final taskState = ref.watch(taskListProvider);
+    final filter = ref.watch(filterProvider);
+
+    return taskState.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(child: Text('Error: $e')),
+      data: (state) {
+        if (state.tasks.isEmpty) {
+          return _EmptyState(filter: filter);
+        }
+
+        return SlidableAutoCloseBehavior(
+          child: ReorderableListView.builder(
+            buildDefaultDragHandles: false,
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            cacheExtent: 500,
+            padding: const EdgeInsets.only(bottom: 24),
+            itemCount: state.tasks.length,
+            proxyDecorator: (child, index, animation) {
+              return Material(
+                elevation: 4 * animation.value,
+                borderRadius: BorderRadius.circular(16),
+                child: child,
+              );
+            },
+            onReorder: (oldIndex, newIndex) {
+              ref.read(taskListProvider.notifier).reorder(oldIndex, newIndex);
+            },
+            itemBuilder: (context, index) {
+              final task = state.tasks[index];
+              return SwipeableTaskTile(
+                key: ValueKey(task.id),
+                task: task,
+                index: index,
+                onTap: () => onOpenTask(task),
+                onToggleComplete: () =>
+                    ref.read(taskListProvider.notifier).toggleComplete(task),
+                onDelete: () => onDismiss(task, index),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }
@@ -228,7 +273,7 @@ class _ProgressHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final pending = state.tasks.where((task) => !task.isCompleted).length;
+    final pending = state.totalTaskCount - state.completedTaskCount;
     final total = state.totalTaskCount;
     final completed = state.completedTaskCount;
 
@@ -260,7 +305,7 @@ class _ProgressHeader extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '${state.tasks.length} tasks · $pending pending',
+                      '$total tasks · $pending pending',
                       style: theme.textTheme.labelLarge?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),

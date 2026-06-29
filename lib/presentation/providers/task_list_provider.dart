@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/services/notification_service.dart';
 import '../../domain/entities/task.dart';
+import '../../domain/entities/task_filter.dart';
+import '../../domain/repositories/task_repository.dart';
 import 'dependency_providers.dart';
 import 'settings_providers.dart';
 
@@ -69,6 +71,8 @@ class TaskListNotifier extends AsyncNotifier<TaskListState> {
   PendingDelete? _pendingDelete;
   Timer? _undoTimer;
   bool _remindersBootstrapped = false;
+  List<Task>? _cachedAllTasks;
+  TaskRepository? _cachedRepository;
 
   @override
   Future<TaskListState> build() async {
@@ -82,6 +86,7 @@ class TaskListNotifier extends AsyncNotifier<TaskListState> {
   Future<TaskListState> _loadTasks({bool bootstrapReminders = false}) async {
     final getTasks = await ref.read(getTasksUseCaseProvider.future);
     final repository = await ref.read(taskRepositoryProvider.future);
+    _cachedRepository = repository;
     final filter = ref.read(filterProvider);
 
     final allTasks = await getTasks();
@@ -94,6 +99,8 @@ class TaskListNotifier extends AsyncNotifier<TaskListState> {
       _remindersBootstrapped = true;
       unawaited(NotificationService.instance.syncTaskReminders(allTasks));
     }
+
+    _cachedAllTasks = allTasks;
 
     return TaskListState(
       tasks: tasks,
@@ -129,15 +136,29 @@ class TaskListNotifier extends AsyncNotifier<TaskListState> {
     }
   }
 
-  void debouncedSearch(String query) {
+  void onSearchChanged(String query) {
+    _applyFilterInMemory(
+      ref.read(filterProvider).copyWith(searchQuery: query),
+    );
+
     _searchDebounce?.cancel();
     _searchDebounce = Timer(
       const Duration(milliseconds: AppConstants.searchDebounceMs),
-      () async {
-        ref.read(filterProvider.notifier).setSearchQuery(query);
-        await _silentRefresh();
-      },
+      () => ref.read(filterProvider.notifier).setSearchQuery(query),
     );
+  }
+
+  void _applyFilterInMemory([TaskFilter? filterOverride]) {
+    final allTasks = _cachedAllTasks;
+    final repository = _cachedRepository;
+    if (allTasks == null || repository == null) return;
+
+    final TaskFilter filter = filterOverride ?? ref.read(filterProvider);
+    final visible = repository.filterTasks(allTasks, filter);
+    final current = state.valueOrNull;
+    if (current == null) return;
+
+    state = AsyncData(_stateFromAllTasks(allTasks, visible));
   }
 
   Future<bool> addTask(Task task) async {
@@ -159,6 +180,7 @@ class TaskListNotifier extends AsyncNotifier<TaskListState> {
     final repository = await ref.read(taskRepositoryProvider.future);
     final filter = ref.read(filterProvider);
     final allTasks = await getTasks();
+    _cachedAllTasks = allTasks;
     final visible = repository.filterTasks(allTasks, filter);
 
     state = AsyncData(_stateFromAllTasks(allTasks, visible));
@@ -188,6 +210,7 @@ class TaskListNotifier extends AsyncNotifier<TaskListState> {
     final repository = await ref.read(taskRepositoryProvider.future);
     final filter = ref.read(filterProvider);
     final allTasks = await getTasks();
+    _cachedAllTasks = allTasks;
     final visible = repository.filterTasks(allTasks, filter);
     state = AsyncData(_stateFromAllTasks(allTasks, visible));
   }
