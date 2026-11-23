@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/theme/app_theme.dart';
-import 'presentation/pages/home_page.dart';
+import 'presentation/pages/auth_gate.dart';
 import 'presentation/providers/settings_providers.dart';
 
 class TaskManagerApp extends ConsumerWidget {
@@ -18,7 +18,7 @@ class TaskManagerApp extends ConsumerWidget {
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: themeMode,
-      home: const HomePage(),
+      home: const AuthGate(),
     );
   }
 }

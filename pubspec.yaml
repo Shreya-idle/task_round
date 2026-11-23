@@ -21,6 +21,9 @@ dependencies:
   timezone: ^0.10.1
   flutter_timezone: ^4.1.0
   flutter_slidable: ^4.0.0
+  firebase_core: ^4.2.1
+  firebase_auth: ^6.1.2
+  cloud_firestore: ^6.1.0
 
 dev_dependencies:
   flutter_test:

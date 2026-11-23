@@ -7,6 +7,7 @@ import '../../core/router/page_transitions.dart';
 import '../../domain/entities/task.dart';
 import '../../domain/entities/task_filter.dart';
 import '../providers/settings_providers.dart';
+import '../providers/auth_providers.dart';
 import '../providers/task_list_provider.dart';
 import '../widgets/active_filter_banner.dart';
 import '../widgets/animated_fab.dart';
@@ -44,7 +45,9 @@ class _HomePageState extends ConsumerState<HomePage> {
     await Navigator.of(context).push(
       SlideFadePageRoute(
         page: TaskFormPage(task: task),
-        settings: RouteSettings(name: task == null ? '/task/new' : '/task/edit'),
+        settings: RouteSettings(
+          name: task == null ? '/task/new' : '/task/edit',
+        ),
       ),
     );
   }
@@ -80,6 +83,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final authSubmitState = ref.watch(authControllerProvider);
 
     ref.listen(filterProvider, (previous, next) {
       if (previous == null) return;
@@ -102,6 +106,34 @@ class _HomePageState extends ConsumerState<HomePage> {
                   ? Icons.light_mode_outlined
                   : Icons.dark_mode_outlined,
             ),
+          ),
+          IconButton(
+            tooltip: 'Log out',
+            onPressed: authSubmitState.isLoading
+                ? null
+                : () async {
+                    final messenger = ScaffoldMessenger.of(context);
+                    final success = await ref
+                        .read(authControllerProvider.notifier)
+                        .logout();
+                    if (!success && mounted) {
+                      final message = ref
+                          .read(authControllerProvider)
+                          .errorMessage;
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text(message ?? 'Could not log out.'),
+                        ),
+                      );
+                    }
+                  },
+            icon: authSubmitState.isLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.logout),
           ),
         ],
       ),
@@ -129,9 +161,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           ],
         ),
       ),
-      floatingActionButton: AnimatedFab(
-        onAddTask: () => _openTaskForm(),
-      ),
+      floatingActionButton: AnimatedFab(onAddTask: () => _openTaskForm()),
     );
   }
 }
@@ -164,10 +194,7 @@ class _TaskSearchField extends StatelessWidget {
             hintText: 'Search title or description...',
             prefixIcon: const Icon(Icons.search),
             suffixIcon: value.text.isNotEmpty
-                ? IconButton(
-                    icon: const Icon(Icons.clear),
-                    onPressed: onClear,
-                  )
+                ? IconButton(icon: const Icon(Icons.clear), onPressed: onClear)
                 : null,
             filled: true,
             fillColor: theme.colorScheme.surfaceContainerHighest,
@@ -208,10 +235,7 @@ class _ProgressHeaderSection extends ConsumerWidget {
 }
 
 class _TaskListSection extends ConsumerWidget {
-  const _TaskListSection({
-    required this.onOpenTask,
-    required this.onDismiss,
-  });
+  const _TaskListSection({required this.onOpenTask, required this.onDismiss});
 
   final ValueChanged<Task> onOpenTask;
   final Future<void> Function(Task task, int index) onDismiss;
@@ -335,8 +359,7 @@ class _EmptyState extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final hasFilters =
-        filter.hasActiveFilters || filter.searchQuery.isNotEmpty;
+    final hasFilters = filter.hasActiveFilters || filter.searchQuery.isNotEmpty;
 
     return Center(
       child: Padding(
